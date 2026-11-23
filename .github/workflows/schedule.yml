@@ -1,1 +1,39 @@
+name: Volyn Power Schedule
 
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # кожні 5 хвилин
+  workflow_dispatch:         # можливість запустити вручну
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Restore previous state
+        uses: actions/cache@v4
+        with:
+          path: last_data.json
+          key: power-state-${{ github.run_id }}
+          restore-keys: |
+            power-state-
+
+      - name: Run script
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+        run: python main.py
