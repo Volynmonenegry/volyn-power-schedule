@@ -650,4 +650,98 @@ def run_single_check():
             current_data,
             prev_data=last_data,
             site_update_dt=site_update_dt,
-            no_outages
+            no_outages=is_empty,
+        )
+        caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
+        send_to_telegram(img_file, caption=caption)
+        save_state(current_data, STATE_FILE)
+    else:
+        print("Змін немає.")
+        save_state(current_data, STATE_FILE)
+
+
+if __name__ == "__main__":
+    args = parse_cli_args()
+
+    if args.debug:
+        print("🛠️ Режим DEBUG...")
+        if args.no_outages:
+            img_file = create_schedule_image({}, prev_data=None, no_outages=True)
+            if args.send:
+                send_to_telegram(img_file, caption="БЕЗ ВІДКЛЮЧЕНЬ! ✅")
+            sys.exit(0)
+
+        base_debug = build_debug_schedule(DEBUG_QUEUES)
+        updated_debug = apply_queue_overrides(base_debug, args.set)
+        prev_for_debug = base_debug if args.set else None
+        is_empty = len(updated_debug) == 0
+        img_file = create_schedule_image(
+            updated_debug,
+            prev_data=prev_for_debug,
+            no_outages=is_empty,
+        )
+        if args.send:
+            caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
+            send_to_telegram(img_file, caption=caption)
+        sys.exit(0)
+
+    if args.live_override:
+        print("🧪 Режим LIVE-OVERRIDE: беремо дані з сайту та застосовуємо --set...")
+        site_data, site_update_dt, _, success = fetch_data_from_site()
+        if not success:
+            print("⚠️ Не вдалося отримати дані з сайту.")
+            sys.exit(1)
+        override_data = {} if args.no_outages else apply_queue_overrides(site_data, args.set)
+        prev_for_live = site_data if (args.set or args.no_outages) else None
+        is_empty = len(override_data) == 0
+        img_file = create_schedule_image(
+            override_data,
+            prev_data=prev_for_live,
+            site_update_dt=site_update_dt,
+            no_outages=is_empty,
+        )
+        if args.send:
+            caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
+            send_to_telegram(img_file, caption=caption)
+        sys.exit(0)
+
+    if args.once:
+        run_single_check()
+        sys.exit(0)
+
+    print("Бот запущений. Починаємо моніторинг у циклі...")
+    last_data = load_state(STATE_FILE)
+
+    while True:
+        try:
+            print(f"\n[{get_now().strftime('%H:%M:%S')}] Перевіряємо оновлення...")
+            current_data, site_update_dt, found_table, success = fetch_data_from_site()
+
+            if not success:
+                print("⚠️ Помилка завантаження сайту — пропускаємо цикл.")
+            else:
+                if not found_table or len(current_data) == 0:
+                    current_data = {}
+
+                if current_data != last_data:
+                    is_empty = len(current_data) == 0
+                    print("🔄 Виявлено зміни в графіку! Малюємо та відправляємо...")
+                    img_file = create_schedule_image(
+                        current_data,
+                        prev_data=last_data,
+                        site_update_dt=site_update_dt,
+                        no_outages=is_empty,
+                    )
+                    caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
+                    send_to_telegram(img_file, caption=caption)
+                    last_data = current_data
+                    save_state(last_data, STATE_FILE)
+                else:
+                    print("Змін немає. Чекаємо далі...")
+                    save_state(current_data, STATE_FILE)
+
+        except Exception as e:
+            print(f"Сталася помилка під час циклу: {e}")
+
+        print("Наступна перевірка через 5 хвилин...")
+        time.sleep(5 * 60)
