@@ -9,6 +9,7 @@ import requests
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import sync_playwright
+from playwright_stealth import stealth_sync # <--- ДОДАНО
 
 try:
     from zoneinfo import ZoneInfo
@@ -17,14 +18,9 @@ except Exception:
     KYIV_TZ = None
 
 # --- НАЛАШТУВАННЯ TELEGRAM ---
-BOT_TOKEN = os.getenv("BOT_TOKEN", "9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk").strip()
-CHANNEL_ID = os.getenv("CHANNEL_ID", "-1004351416914").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_ЯКЩО_НЕ_В_ЗМІННИХ")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "ВАШ_КАНАЛ")
 STATE_FILE = "state.json"
-
-# --- НАЛАШТУВАННЯ ПРОКСІ (ОПЦІЙНО) ---
-PROXY_SERVER = os.getenv("PROXY_SERVER", "").strip()
-PROXY_USERNAME = os.getenv("PROXY_USERNAME", "").strip()
-PROXY_PASSWORD = os.getenv("PROXY_PASSWORD", "").strip()
 
 # --- НАЛАШТУВАННЯ ДЛЯ ПОШУКУ ---
 USER_CITY = "Луцьк"
@@ -52,15 +48,15 @@ COLOR_TEXT_LIGHT = (120, 120, 120)
 COLOR_POWER_ON = (232, 245, 233)
 COLOR_POWER_OFF = (76, 175, 80)
 
-# Кольори штрихування для змін протягом дня (лише коли є попередній графік prev_data)
-COLOR_ADDED_OFF = (56, 142, 60)       # Додано відключення
-COLOR_REMOVED_OFF = (200, 230, 201)   # Прибрано відключення
+# Кольори штрихування для змін протягом дня
+COLOR_ADDED_OFF = (56, 142, 60)
+COLOR_REMOVED_OFF = (200, 230, 201)
 COLOR_HATCH_DARK = (27, 94, 32)
 COLOR_HATCH_LIGHT = (129, 199, 132)
 
 # Смужки оновлення та поточного часу
-COLOR_SITE_UPDATE_LINE = (234, 179, 8)  # Жовта мітка/смужка — останнє оновлення на сайті
-COLOR_NOW_LINE = (34, 197, 94)          # Зелена смужка — поточний момент часу
+COLOR_SITE_UPDATE_LINE = (234, 179, 8)
+COLOR_NOW_LINE = (34, 197, 94)
 
 queues = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"]
 
@@ -70,18 +66,15 @@ DEBUG_QUEUES = {
     "4.1": "00:00-02:00, 14:00-16:00",
 }
 
-
 def get_now():
     if KYIV_TZ is not None:
         return datetime.datetime.now(KYIV_TZ).replace(tzinfo=None)
     return datetime.datetime.now()
 
-
 def serialize_data(data_dict):
     if data_dict is None:
         return None
     return {f"{r}:{c}": bool(v) for (r, c), v in data_dict.items() if v}
-
 
 def deserialize_data(raw_dict):
     if raw_dict is None:
@@ -92,7 +85,6 @@ def deserialize_data(raw_dict):
             r_str, c_str = key.split(":")
             result[(int(r_str), int(c_str))] = True
     return result
-
 
 def load_state(path=STATE_FILE):
     if not os.path.exists(path):
@@ -108,7 +100,6 @@ def load_state(path=STATE_FILE):
         print(f"⚠️ Не вдалося прочитати {path}: {e}")
         return None
 
-
 def save_state(data_dict, path=STATE_FILE):
     payload = {
         "date": get_now().date().isoformat(),
@@ -117,9 +108,7 @@ def save_state(data_dict, path=STATE_FILE):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
-
 def draw_hatched_rect(draw, coords, base_color, hatch_color, step=8):
-    """Малює клітинку з діагональним штрихуванням."""
     x1, y1, x2, y2 = coords
     draw.rectangle([x1, y1, x2, y2], fill=base_color, outline=COLOR_GRID, width=1)
 
@@ -144,9 +133,7 @@ def draw_hatched_rect(draw, coords, base_color, hatch_color, step=8):
     draw._image.paste(combined, (int(x1), int(y1)))
     draw.rectangle([x1, y1, x2, y2], outline=COLOR_GRID, width=1)
 
-
 def time_to_x(dt_obj, schedule_date):
-    """Переводить час доби у координату X на сітці (0..48 інтервалів)."""
     if dt_obj.date() < schedule_date:
         return float(MARGIN_LEFT)
     if dt_obj.date() > schedule_date:
@@ -157,15 +144,7 @@ def time_to_x(dt_obj, schedule_date):
     slots = max(0.0, min(float(NUM_INTERVALS), slots))
     return MARGIN_LEFT + slots * CELL_WIDTH
 
-
 def classify_cells(current_data, prev_data):
-    """
-    Повертає словник {(row, col): status}:
-    - 'off'
-    - 'on'
-    - 'added_off'   (тільки коли prev_data існує і відключення додалося)
-    - 'removed_off' (тільки коли prev_data існує і відключення прибрали)
-    """
     cell_states = {}
 
     for row in range(NUM_QUEUES):
@@ -188,19 +167,13 @@ def classify_cells(current_data, prev_data):
 
     return cell_states
 
-
 def count_main_queues_off_in_slot(cell_states, col_idx):
-    """
-    Рахує кількість основних черг (за першою цифрою: 1..6), які вимкнені у вказаному слоті.
-    Наприклад, якщо вимкнені 5.1 та 5.2 (або лише 5.1) — це рахується як 1 черга (група '5').
-    """
     active_groups = set()
     for row in range(NUM_QUEUES):
         if cell_states[(row, col_idx)] in ("off", "added_off"):
             main_group = queues[row].split(".")[0]
             active_groups.add(main_group)
     return len(active_groups)
-
 
 def load_fonts():
     font_candidates = [
@@ -220,7 +193,6 @@ def load_fonts():
             continue
     default_font = ImageFont.load_default()
     return default_font, default_font, default_font, default_font, default_font
-
 
 def create_schedule_image(
     power_off_data,
@@ -243,7 +215,6 @@ def create_schedule_image(
     effective_data = {} if no_outages else (power_off_data or {})
     cell_states = classify_cells(effective_data, prev_data)
 
-    # Малюємо клітинки
     for row in range(NUM_QUEUES):
         for col in range(NUM_INTERVALS):
             x1 = MARGIN_LEFT + (col * CELL_WIDTH)
@@ -261,7 +232,6 @@ def create_schedule_image(
             else:
                 draw.rectangle([x1, y1, x2, y2], fill=COLOR_POWER_ON, outline=COLOR_GRID, width=1)
 
-    # Логотип і дата/час оновлення на самій картинці
     logo_text = "Волинь Вимкнення"
     draw.text((25, 35), logo_text, fill=COLOR_POWER_OFF, font=font_logo, anchor="lm")
 
@@ -276,7 +246,6 @@ def create_schedule_image(
     update_badge_text = f"Оновлено: {update_dt.strftime('%d.%m.%Y %H:%M')}"
     draw.text((IMG_WIDTH - 25, 35), update_badge_text, fill=COLOR_TEXT_LIGHT, font=font_title, anchor="rm")
 
-    # Години та вертикальні лінії сітки
     grid_bottom_y = MARGIN_TOP + (NUM_QUEUES * CELL_HEIGHT)
     grid_right_x = MARGIN_LEFT + (NUM_INTERVALS * CELL_WIDTH)
     for hour in range(24):
@@ -289,7 +258,6 @@ def create_schedule_image(
     x_last_col_start = MARGIN_LEFT + (47 * CELL_WIDTH)
     draw.text((x_last_col_start + (CELL_WIDTH / 2), 75), "24", fill=COLOR_TEXT, font=font_bold, anchor="mm")
 
-    # Права колонка "год"
     right_col_x1 = grid_right_x + 25
     right_col_x2 = IMG_WIDTH - 15
     right_col_center_x = right_col_x1 + ((right_col_x2 - right_col_x1) / 2)
@@ -319,7 +287,6 @@ def create_schedule_image(
             anchor="mm",
         )
 
-    # Рядок "Черг:" під таблицею (5.1 та 5.2 рахуються як одна черга '5')
     summary_y = grid_bottom_y + 18
     draw.text((25, summary_y), "Черг:", fill=COLOR_TEXT, font=font_bold, anchor="lm")
     for hour in range(24):
@@ -337,7 +304,6 @@ def create_schedule_image(
             anchor="mm",
         )
 
-    # Напис "БЕЗ ВІДКЛЮЧЕНЬ!", якщо графіків немає
     if no_outages or len(effective_data) == 0:
         banner_w = 420
         banner_h = 66
@@ -355,25 +321,11 @@ def create_schedule_image(
             anchor="mm",
         )
 
-    # Мітка оновлення — вгорі над сіткою; поточний момент часу — вертикальна лінія по сітці
     site_x = time_to_x(update_dt, schedule_date)
     now_x = time_to_x(now, schedule_date)
-
-    top_bar_y1 = MARGIN_TOP - 28
-    top_bar_y2 = MARGIN_TOP - 6
-    draw.line([(site_x, top_bar_y1), (site_x, top_bar_y2)], fill=COLOR_SITE_UPDATE_LINE, width=4)
-    draw.polygon(
-        [
-            (site_x - 6, top_bar_y1 - 6),
-            (site_x + 6, top_bar_y1 - 6),
-            (site_x, top_bar_y1 + 2),
-        ],
-        fill=COLOR_SITE_UPDATE_LINE,
-    )
-
+    draw.line([(site_x, MARGIN_TOP - 8), (site_x, grid_bottom_y + 6)], fill=COLOR_SITE_UPDATE_LINE, width=3)
     draw.line([(now_x, MARGIN_TOP - 8), (now_x, grid_bottom_y + 6)], fill=COLOR_NOW_LINE, width=3)
 
-    # Легенда
     leg_y1 = summary_y + 32
     leg_y2 = leg_y1 + 26
 
@@ -406,7 +358,6 @@ def create_schedule_image(
     print(f"✅ Картинку успішно згенеровано та збережено як {output_path}!")
     return output_path
 
-
 def extract_site_update_time(soup):
     text = soup.get_text(" ", strip=True)
     match = re.search(
@@ -429,69 +380,28 @@ def extract_site_update_time(soup):
             continue
     return None
 
-
 def fetch_data_from_site():
     print("Запускаємо віртуальний браузер...")
-    launch_kwargs = {
-        "headless": True,
-        "args": [
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-        ],
-    }
-    if PROXY_SERVER:
-        proxy_cfg = {"server": PROXY_SERVER}
-        if PROXY_USERNAME:
-            proxy_cfg["username"] = PROXY_USERNAME
-        if PROXY_PASSWORD:
-            proxy_cfg["password"] = PROXY_PASSWORD
-        launch_kwargs["proxy"] = proxy_cfg
-        print(f"Використовуємо проксі: {PROXY_SERVER}")
-
     with sync_playwright() as p:
-        browser = p.chromium.launch(**launch_kwargs)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            viewport={"width": 1366, "height": 768},
-            locale="uk-UA",
-            timezone_id="Europe/Kyiv",
+        # --- ДОДАНО АРГУМЕНТИ ДЛЯ МАСКУВАННЯ ---
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"]
         )
-        context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        page = context.new_page()
+        page = browser.new_page()
+        
+        # --- ЗАСТОСОВУЄМО STEALTH ---
+        stealth_sync(page)
 
         try:
             print("Завантажуємо сторінку...")
             page.goto(
                 "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/",
                 timeout=60000,
-                wait_until="domcontentloaded",
             )
             time.sleep(3)
-            print("URL:", page.url)
-            print("Title:", page.title())
-            try:
-                body_preview = page.locator("body").inner_text(timeout=5000)[:400].replace("\n", " ")
-                print("Body snippet:", body_preview)
-            except Exception as body_err:
-                print("Body snippet недоступний:", body_err)
-
-            print("Чекаємо проходження перевірки та появи #formCity...")
-            deadline = time.time() + 25
-            while time.time() < deadline:
-                try:
-                    if page.locator("#formCity").is_visible():
-                        break
-                    title_low = page.title().lower()
-                    if "зачекайте" not in title_low and "just a moment" not in title_low:
-                        if page.locator("#formCity").count() > 0:
-                            break
-                except Exception:
-                    pass
-                time.sleep(2)
 
             print("Вводимо місто...")
-            page.locator("#formCity").wait_for(state="visible", timeout=20000)
             page.fill("#formCity", USER_CITY)
             time.sleep(1)
 
@@ -555,10 +465,10 @@ def fetch_data_from_site():
                     break
 
             if not found_table:
-                print("ℹ️ Не знайдено таблицю з результатами — графіків немає (БЕЗ ВІДКЛЮЧЕНЬ!).")
+                print("❌ Не знайдено таблицю з результатами. Можливо, на сьогодні графіка немає.")
 
             browser.close()
-            return power_off_data, site_update_dt, found_table, True
+            return power_off_data, site_update_dt, found_table
 
         except Exception as e:
             print(f"КРИТИЧНА ПОМИЛКА: {e}")
@@ -566,8 +476,7 @@ def fetch_data_from_site():
                 browser.close()
             except Exception:
                 pass
-            return {}, None, False, False
-
+            return {}, None, False
 
 def parse_intervals_into_data(data_dict, queue_name, time_ranges):
     if queue_name not in queues:
@@ -589,13 +498,11 @@ def parse_intervals_into_data(data_dict, queue_name, time_ranges):
             if 0 <= c < 48:
                 data_dict[(row_idx, c)] = True
 
-
 def build_debug_schedule(debug_queues):
     debug_data = {}
     for q_name, ranges_str in debug_queues.items():
         parse_intervals_into_data(debug_data, q_name, ranges_str)
     return debug_data
-
 
 def apply_queue_overrides(base_data, overrides):
     data = dict(base_data)
@@ -616,7 +523,6 @@ def apply_queue_overrides(base_data, overrides):
 
     return data
 
-
 def send_to_telegram(image_path, caption="Оновлений графік відключень ⚡"):
     print(f"Відправляємо {image_path} в Telegram...")
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
@@ -624,14 +530,13 @@ def send_to_telegram(image_path, caption="Оновлений графік від
         with open(image_path, "rb") as photo:
             files = {"photo": photo}
             data = {"chat_id": CHANNEL_ID, "caption": caption}
-            response = requests.post(url, files=files, data=data, timeout=30)
+            response = requests.post(url, files=files, data=data)
             if response.status_code == 200:
                 print("✅ Картинку успішно відправлено в канал!")
             else:
                 print(f"❌ Помилка відправки в Telegram: {response.text}")
     except Exception as e:
         print(f"Помилка відправки: {e}")
-
 
 def parse_cli_args():
     parser = argparse.ArgumentParser(description="Моніторинг графіків вимкнень + дебаг черг")
@@ -654,15 +559,10 @@ def parse_cli_args():
     parser.add_argument("--send", action="store_true", help="Відправити згенеровану картинку в Telegram")
     return parser.parse_args()
 
-
 def run_single_check():
     print(f"\n[{get_now().strftime('%H:%M:%S')}] Перевіряємо оновлення (режим --once)...")
     last_data = load_state(STATE_FILE)
-    current_data, site_update_dt, found_table, success = fetch_data_from_site()
-
-    if not success:
-        print("⚠️ Помилка завантаження сайту — пропускаємо перевірку, нічого не відправляємо.")
-        return
+    current_data, site_update_dt, found_table = fetch_data_from_site()
 
     if not found_table or len(current_data) == 0:
         current_data = {}
@@ -682,7 +582,6 @@ def run_single_check():
     else:
         print("Змін немає.")
         save_state(current_data, STATE_FILE)
-
 
 if __name__ == "__main__":
     args = parse_cli_args()
@@ -711,10 +610,7 @@ if __name__ == "__main__":
 
     if args.live_override:
         print("🧪 Режим LIVE-OVERRIDE: беремо дані з сайту та застосовуємо --set...")
-        site_data, site_update_dt, _, success = fetch_data_from_site()
-        if not success:
-            print("⚠️ Не вдалося отримати дані з сайту.")
-            sys.exit(1)
+        site_data, site_update_dt, _ = fetch_data_from_site()
         override_data = {} if args.no_outages else apply_queue_overrides(site_data, args.set)
         prev_for_live = site_data if (args.set or args.no_outages) else None
         is_empty = len(override_data) == 0
@@ -739,30 +635,27 @@ if __name__ == "__main__":
     while True:
         try:
             print(f"\n[{get_now().strftime('%H:%M:%S')}] Перевіряємо оновлення...")
-            current_data, site_update_dt, found_table, success = fetch_data_from_site()
+            current_data, site_update_dt, found_table = fetch_data_from_site()
 
-            if not success:
-                print("⚠️ Помилка завантаження сайту — пропускаємо цикл.")
+            if not found_table or len(current_data) == 0:
+                current_data = {}
+
+            if current_data != last_data:
+                is_empty = len(current_data) == 0
+                print("🔄 Виявлено зміни в графіку! Малюємо та відправляємо...")
+                img_file = create_schedule_image(
+                    current_data,
+                    prev_data=last_data,
+                    site_update_dt=site_update_dt,
+                    no_outages=is_empty,
+                )
+                caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
+                send_to_telegram(img_file, caption=caption)
+                last_data = current_data
+                save_state(last_data, STATE_FILE)
             else:
-                if not found_table or len(current_data) == 0:
-                    current_data = {}
-
-                if current_data != last_data:
-                    is_empty = len(current_data) == 0
-                    print("🔄 Виявлено зміни в графіку! Малюємо та відправляємо...")
-                    img_file = create_schedule_image(
-                        current_data,
-                        prev_data=last_data,
-                        site_update_dt=site_update_dt,
-                        no_outages=is_empty,
-                    )
-                    caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
-                    send_to_telegram(img_file, caption=caption)
-                    last_data = current_data
-                    save_state(last_data, STATE_FILE)
-                else:
-                    print("Змін немає. Чекаємо далі...")
-                    save_state(current_data, STATE_FILE)
+                print("Змін немає. Чекаємо далі...")
+                save_state(current_data, STATE_FILE)
 
         except Exception as e:
             print(f"Сталася помилка під час циклу: {e}")
