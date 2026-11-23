@@ -9,8 +9,8 @@ from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import sync_playwright
 
 # --- НАЛАШТУВАННЯ TELEGRAM ---
-BOT_TOKEN = "ВАШ_ТОКЕН"
-CHANNEL_ID = "ВАШ_КАНАЛ"
+BOT_TOKEN = "9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk"
+CHANNEL_ID = "-1004351416914"
 
 # --- НАЛАШТУВАННЯ ДЛЯ ПОШУКУ ---
 USER_CITY = "Луцьк"
