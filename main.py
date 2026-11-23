@@ -1,5 +1,7 @@
 import argparse
 import datetime
+import json
+import os
 import re
 import sys
 import time
@@ -8,9 +10,16 @@ from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import sync_playwright
 
+try:
+    from zoneinfo import ZoneInfo
+    KYIV_TZ = ZoneInfo("Europe/Kyiv")
+except Exception:
+    KYIV_TZ = None
+
 # --- НАЛАШТУВАННЯ TELEGRAM ---
-BOT_TOKEN = "9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk"
-CHANNEL_ID = "-1004351416914"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "-1004351416914")
+STATE_FILE = "state.json"
 
 # --- НАЛАШТУВАННЯ ДЛЯ ПОШУКУ ---
 USER_CITY = "Луцьк"
@@ -55,6 +64,54 @@ DEBUG_QUEUES = {
     "2.2": "12:00-15:30",
     "4.1": "00:00-02:00, 14:00-16:00",
 }
+
+
+def get_now():
+    if KYIV_TZ is not None:
+        return datetime.datetime.now(KYIV_TZ).replace(tzinfo=None)
+    return datetime.datetime.now()
+
+
+def serialize_data(data_dict):
+    if data_dict is None:
+        return None
+    return {f"{r}:{c}": bool(v) for (r, c), v in data_dict.items() if v}
+
+
+def deserialize_data(raw_dict):
+    if raw_dict is None:
+        return None
+    result = {}
+    for key, val in raw_dict.items():
+        if val:
+            r_str, c_str = key.split(":")
+            result[(int(r_str), int(c_str))] = True
+    return result
+
+
+def load_state(path=STATE_FILE):
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        today_str = get_now().date().isoformat()
+        # Якщо настав новий день — скидаємо попередній стан, щоб не плутати вчорашній графік із сьогоднішнім
+        if payload.get("date") != today_str:
+            return None
+        return deserialize_data(payload.get("data"))
+    except Exception as e:
+        print(f"⚠️ Не вдалося прочитати {path}: {e}")
+        return None
+
+
+def save_state(data_dict, path=STATE_FILE):
+    payload = {
+        "date": get_now().date().isoformat(),
+        "data": serialize_data(data_dict),
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
 def draw_hatched_rect(draw, coords, base_color, hatch_color, step=8):
@@ -113,7 +170,6 @@ def classify_cells(current_data, prev_data):
             now_off = bool(current_data.get(key, False))
 
             if prev_data is None:
-                # Перша поява графіка — без штрихування
                 cell_states[key] = "off" if now_off else "on"
             else:
                 was_off = bool(prev_data.get(key, False))
@@ -142,6 +198,26 @@ def count_main_queues_off_in_slot(cell_states, col_idx):
     return len(active_groups)
 
 
+def load_fonts():
+    font_candidates = [
+        ("segoeui.ttf", "segoeuib.ttf"),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    ]
+    for reg_path, bold_path in font_candidates:
+        try:
+            return (
+                ImageFont.truetype(reg_path, 14),
+                ImageFont.truetype(bold_path, 16),
+                ImageFont.truetype(bold_path, 20),
+                ImageFont.truetype(bold_path, 28),
+                ImageFont.truetype(bold_path, 34),
+            )
+        except IOError:
+            continue
+    default_font = ImageFont.load_default()
+    return default_font, default_font, default_font, default_font, default_font
+
+
 def create_schedule_image(
     power_off_data,
     prev_data=None,
@@ -151,30 +227,18 @@ def create_schedule_image(
     no_outages=False,
 ):
     print("Починаємо малювати картинку...")
-    now = datetime.datetime.now()
-    schedule_date = schedule_date or datetime.date.today()
+    now = get_now()
+    schedule_date = schedule_date or now.date()
     update_dt = site_update_dt or now
 
     img = Image.new("RGB", (IMG_WIDTH, IMG_HEIGHT), COLOR_BG)
     draw = ImageDraw.Draw(img)
 
-    try:
-        font_small = ImageFont.truetype("segoeui.ttf", 14)
-        font_bold = ImageFont.truetype("segoeuib.ttf", 16)
-        font_title = ImageFont.truetype("segoeuib.ttf", 20)
-        font_logo = ImageFont.truetype("segoeuib.ttf", 28)
-        font_banner = ImageFont.truetype("segoeuib.ttf", 34)
-    except IOError:
-        font_small = ImageFont.load_default()
-        font_bold = ImageFont.load_default()
-        font_title = ImageFont.load_default()
-        font_logo = ImageFont.load_default()
-        font_banner = ImageFont.load_default()
+    font_small, font_bold, font_title, font_logo, font_banner = load_fonts()
 
     effective_data = {} if no_outages else (power_off_data or {})
     cell_states = classify_cells(effective_data, prev_data)
 
-    # Малюємо клітинки
     for row in range(NUM_QUEUES):
         for col in range(NUM_INTERVALS):
             x1 = MARGIN_LEFT + (col * CELL_WIDTH)
@@ -192,7 +256,6 @@ def create_schedule_image(
             else:
                 draw.rectangle([x1, y1, x2, y2], fill=COLOR_POWER_ON, outline=COLOR_GRID, width=1)
 
-    # Логотип і дата/час оновлення на самій картинці
     logo_text = "Волинь Вимкнення"
     draw.text((25, 35), logo_text, fill=COLOR_POWER_OFF, font=font_logo, anchor="lm")
 
@@ -207,7 +270,6 @@ def create_schedule_image(
     update_badge_text = f"Оновлено: {update_dt.strftime('%d.%m.%Y %H:%M')}"
     draw.text((IMG_WIDTH - 25, 35), update_badge_text, fill=COLOR_TEXT_LIGHT, font=font_title, anchor="rm")
 
-    # Години та вертикальні лінії сітки
     grid_bottom_y = MARGIN_TOP + (NUM_QUEUES * CELL_HEIGHT)
     grid_right_x = MARGIN_LEFT + (NUM_INTERVALS * CELL_WIDTH)
     for hour in range(24):
@@ -220,7 +282,6 @@ def create_schedule_image(
     x_last_col_start = MARGIN_LEFT + (47 * CELL_WIDTH)
     draw.text((x_last_col_start + (CELL_WIDTH / 2), 75), "24", fill=COLOR_TEXT, font=font_bold, anchor="mm")
 
-    # Права колонка "год"
     right_col_x1 = grid_right_x + 25
     right_col_x2 = IMG_WIDTH - 15
     right_col_center_x = right_col_x1 + ((right_col_x2 - right_col_x1) / 2)
@@ -250,7 +311,6 @@ def create_schedule_image(
             anchor="mm",
         )
 
-    # Рядок "Черг:" під таблицею (5.1 та 5.2 рахуються як одна черга '5')
     summary_y = grid_bottom_y + 18
     draw.text((25, summary_y), "Черг:", fill=COLOR_TEXT, font=font_bold, anchor="lm")
     for hour in range(24):
@@ -268,7 +328,6 @@ def create_schedule_image(
             anchor="mm",
         )
 
-    # Напис "БЕЗ ВІДКЛЮЧЕНЬ!", якщо графіків немає
     if no_outages or len(effective_data) == 0:
         banner_w = 420
         banner_h = 66
@@ -286,13 +345,11 @@ def create_schedule_image(
             anchor="mm",
         )
 
-    # Жовта й зелена смужки
     site_x = time_to_x(update_dt, schedule_date)
     now_x = time_to_x(now, schedule_date)
     draw.line([(site_x, MARGIN_TOP - 8), (site_x, grid_bottom_y + 6)], fill=COLOR_SITE_UPDATE_LINE, width=3)
     draw.line([(now_x, MARGIN_TOP - 8), (now_x, grid_bottom_y + 6)], fill=COLOR_NOW_LINE, width=3)
 
-    # Легенда
     leg_y1 = summary_y + 32
     leg_y2 = leg_y1 + 26
 
@@ -327,7 +384,6 @@ def create_schedule_image(
 
 
 def extract_site_update_time(soup):
-    """Пробує знайти на сторінці дату/час останнього оновлення графіка."""
     text = soup.get_text(" ", strip=True)
     match = re.search(
         r"(?:оновлено|оновлення)[^\d]{0,25}(\d{2}[./]\d{2}(?:[./]\d{2,4})?)\s*(?:о\s*)?(\d{2}:\d{2})",
@@ -343,7 +399,7 @@ def extract_site_update_time(soup):
         try:
             parsed = datetime.datetime.strptime(f"{date_part} {time_part}", fmt)
             if fmt == "%d.%m %H:%M":
-                parsed = parsed.replace(year=datetime.date.today().year)
+                parsed = parsed.replace(year=get_now().year)
             return parsed
         except ValueError:
             continue
@@ -368,7 +424,7 @@ def fetch_data_from_site():
             page.fill("#formCity", USER_CITY)
             time.sleep(1)
 
-            today = datetime.date.today()
+            today = get_now().date()
             today_str = today.strftime("%Y-%m-%d")
             print(f"Вибираємо сьогоднішню дату: {today_str}")
 
@@ -508,6 +564,7 @@ def send_to_telegram(image_path, caption="Оновлений графік від
 
 def parse_cli_args():
     parser = argparse.ArgumentParser(description="Моніторинг графіків вимкнень + дебаг черг")
+    parser.add_argument("--once", action="store_true", help="Виконати одну перевірку та завершитися (для GitHub Actions)")
     parser.add_argument("--debug", action="store_true", help="Тестовий режим на основі DEBUG_QUEUES та --set")
     parser.add_argument("--live-override", action="store_true", help="Взяти графік із сайту та накласти --set")
     parser.add_argument(
@@ -525,6 +582,31 @@ def parse_cli_args():
     )
     parser.add_argument("--send", action="store_true", help="Відправити згенеровану картинку в Telegram")
     return parser.parse_args()
+
+
+def run_single_check():
+    print(f"\n[{get_now().strftime('%H:%M:%S')}] Перевіряємо оновлення (режим --once)...")
+    last_data = load_state(STATE_FILE)
+    current_data, site_update_dt, found_table = fetch_data_from_site()
+
+    if not found_table or len(current_data) == 0:
+        current_data = {}
+
+    if current_data != last_data:
+        is_empty = len(current_data) == 0
+        print("🔄 Виявлено зміни в графіку! Малюємо та відправляємо...")
+        img_file = create_schedule_image(
+            current_data,
+            prev_data=last_data,
+            site_update_dt=site_update_dt,
+            no_outages=is_empty,
+        )
+        caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
+        send_to_telegram(img_file, caption=caption)
+        save_state(current_data, STATE_FILE)
+    else:
+        print("Змін немає.")
+        save_state(current_data, STATE_FILE)
 
 
 if __name__ == "__main__":
@@ -569,12 +651,16 @@ if __name__ == "__main__":
             send_to_telegram(img_file, caption=caption)
         sys.exit(0)
 
+    if args.once:
+        run_single_check()
+        sys.exit(0)
+
     print("Бот запущений. Починаємо моніторинг у циклі...")
-    last_data = None
+    last_data = load_state(STATE_FILE)
 
     while True:
         try:
-            print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] Перевіряємо оновлення...")
+            print(f"\n[{get_now().strftime('%H:%M:%S')}] Перевіряємо оновлення...")
             current_data, site_update_dt, found_table = fetch_data_from_site()
 
             if not found_table or len(current_data) == 0:
@@ -592,11 +678,13 @@ if __name__ == "__main__":
                 caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
                 send_to_telegram(img_file, caption=caption)
                 last_data = current_data
+                save_state(last_data, STATE_FILE)
             else:
                 print("Змін немає. Чекаємо далі...")
+                save_state(current_data, STATE_FILE)
 
         except Exception as e:
             print(f"Сталася помилка під час циклу: {e}")
 
-        print("Наступна перевірка через 15 хвилин...")
-        time.sleep(15 * 60)
+        print("Наступна перевірка через 5 хвилин...")
+        time.sleep(5 * 60)
