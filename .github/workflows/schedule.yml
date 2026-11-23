@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      BOT_TOKEN: ${{ secrets.9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk }}
+      BOT_TOKEN: ${{ 9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk }}
       CHANNEL_ID: ${{ -1004351416914 }}
 
     steps:
