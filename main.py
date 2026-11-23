@@ -9,7 +9,9 @@ import requests
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth_sync # <--- ДОДАНО
+
+# --- ВИПРАВЛЕНИЙ ІМПОРТ STEALTH ---
+from playwright_stealth import Stealth 
 
 try:
     from zoneinfo import ZoneInfo
@@ -18,8 +20,8 @@ except Exception:
     KYIV_TZ = None
 
 # --- НАЛАШТУВАННЯ TELEGRAM ---
-BOT_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_ЯКЩО_НЕ_В_ЗМІННИХ")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "ВАШ_КАНАЛ")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "-1004351416914")
 STATE_FILE = "state.json"
 
 # --- НАЛАШТУВАННЯ ДЛЯ ПОШУКУ ---
@@ -383,15 +385,15 @@ def extract_site_update_time(soup):
 def fetch_data_from_site():
     print("Запускаємо віртуальний браузер...")
     with sync_playwright() as p:
-        # --- ДОДАНО АРГУМЕНТИ ДЛЯ МАСКУВАННЯ ---
+        # Додано аргумент --disable-blink-features=AutomationControlled
         browser = p.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled"]
         )
         page = browser.new_page()
         
-        # --- ЗАСТОСОВУЄМО STEALTH ---
-        stealth_sync(page)
+        # --- ЗАСТОСОВУЄМО STEALTH (НОВИЙ СИНТАКСИС) ---
+        Stealth().use_sync(page) 
 
         try:
             print("Завантажуємо сторінку...")
