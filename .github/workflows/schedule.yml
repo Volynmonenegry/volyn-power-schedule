@@ -37,7 +37,7 @@ jobs:
           playwright install --with-deps chromium
 
       - name: Run bot
-        run: python -u main.py --once
+        run: python -u main.py
 
       - name: Commit updated state if changed
         run: |
