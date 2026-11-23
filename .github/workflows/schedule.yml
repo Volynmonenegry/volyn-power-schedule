@@ -7,15 +7,15 @@ on:
     branches:
       - main
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
 
 jobs:
   update:
     runs-on: ubuntu-latest
 
     env:
-      BOT_TOKEN: ${{ 9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk }}
-      CHANNEL_ID: ${{ -1004351416914 }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
 
     steps:
       - name: Checkout
