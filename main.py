@@ -15,7 +15,7 @@ try:
 except Exception:
     KYIV_TZ = None
 
-# --- НАЛАШТУВАННЯ TELEGRAM ---
+# --- НАЛАШТУВАННЯ TELEGRAM (Береться з Secrets) ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk").strip()
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1004351416914").strip()
 STATE_FILE = "state.json"
@@ -46,15 +46,15 @@ COLOR_TEXT_LIGHT = (120, 120, 120)
 COLOR_POWER_ON = (232, 245, 233)
 COLOR_POWER_OFF = (76, 175, 80)
 
-# Кольори штрихування для змін протягом дня (лише коли є попередній графік prev_data)
-COLOR_ADDED_OFF = (56, 142, 60)       # Додано відключення
-COLOR_REMOVED_OFF = (200, 230, 201)   # Прибрано відключення
+# Кольори штрихування для змін
+COLOR_ADDED_OFF = (56, 142, 60)
+COLOR_REMOVED_OFF = (200, 230, 201)
 COLOR_HATCH_DARK = (27, 94, 32)
 COLOR_HATCH_LIGHT = (129, 199, 132)
 
 # Смужки оновлення та поточного часу
-COLOR_SITE_UPDATE_LINE = (234, 179, 8)  # Жовта смужка — останнє оновлення на сайті
-COLOR_NOW_LINE = (34, 197, 94)          # Зелена смужка — поточний момент часу
+COLOR_SITE_UPDATE_LINE = (234, 179, 8)
+COLOR_NOW_LINE = (34, 197, 94)
 
 queues = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"]
 
@@ -109,7 +109,6 @@ def load_state(path=STATE_FILE):
         with open(path, "r", encoding="utf-8") as f:
             payload = json.load(f)
         today_str = get_now().date().isoformat()
-        # Якщо настав новий день — скидаємо попередній стан, щоб не плутати вчорашній графік із сьогоднішнім
         if payload.get("date") != today_str:
             return None
         return deserialize_data(payload.get("data"))
@@ -128,7 +127,6 @@ def save_state(data_dict, path=STATE_FILE):
 
 
 def draw_hatched_rect(draw, coords, base_color, hatch_color, step=8):
-    """Малює клітинку з діагональним штрихуванням."""
     x1, y1, x2, y2 = coords
     draw.rectangle([x1, y1, x2, y2], fill=base_color, outline=COLOR_GRID, width=1)
 
@@ -155,7 +153,6 @@ def draw_hatched_rect(draw, coords, base_color, hatch_color, step=8):
 
 
 def time_to_x(dt_obj, schedule_date):
-    """Переводить час доби у координату X на сітці (0..48 інтервалів)."""
     if dt_obj.date() < schedule_date:
         return float(MARGIN_LEFT)
     if dt_obj.date() > schedule_date:
@@ -168,15 +165,7 @@ def time_to_x(dt_obj, schedule_date):
 
 
 def classify_cells(current_data, prev_data):
-    """
-    Повертає словник {(row, col): status}:
-    - 'off'
-    - 'on'
-    - 'added_off'   (тільки коли prev_data існує і відключення додалося)
-    - 'removed_off' (тільки коли prev_data існує і відключення прибрали)
-    """
     cell_states = {}
-
     for row in range(NUM_QUEUES):
         for col in range(NUM_INTERVALS):
             key = (row, col)
@@ -194,15 +183,10 @@ def classify_cells(current_data, prev_data):
                     cell_states[key] = "off"
                 else:
                     cell_states[key] = "on"
-
     return cell_states
 
 
 def count_main_queues_off_in_slot(cell_states, col_idx):
-    """
-    Рахує кількість основних черг (за першою цифрою: 1..6), які вимкнені у вказаному слоті.
-    Наприклад, якщо вимкнені 5.1 та 5.2 (або лише 5.1) — це рахується як 1 черга (група '5').
-    """
     active_groups = set()
     for row in range(NUM_QUEUES):
         if cell_states[(row, col_idx)] in ("off", "added_off"):
@@ -232,14 +216,7 @@ def load_fonts():
     return default_font, default_font, default_font, default_font, default_font
 
 
-def create_schedule_image(
-    power_off_data,
-    prev_data=None,
-    site_update_dt=None,
-    schedule_date=None,
-    output_path=None,
-    no_outages=False,
-):
+def create_schedule_image(power_off_data, prev_data=None, site_update_dt=None, schedule_date=None, output_path=None, no_outages=False):
     print("Починаємо малювати картинку...")
     now = get_now()
     schedule_date = schedule_date or now.date()
@@ -311,19 +288,10 @@ def create_schedule_image(
         f = font_bold if queues[row].endswith(".1") else font_small
         draw.text((30, y_center), queues[row], fill=COLOR_TEXT, font=f, anchor="lm")
 
-        off_slots = sum(
-            1 for c in range(NUM_INTERVALS)
-            if cell_states[(row, c)] in ("off", "added_off")
-        )
+        off_slots = sum(1 for c in range(NUM_INTERVALS) if cell_states[(row, c)] in ("off", "added_off"))
         total_h = off_slots * 0.5
         sum_text = f"{total_h:.1f}"
-        draw.text(
-            (right_col_center_x, y_center),
-            sum_text,
-            fill=COLOR_TEXT,
-            font=font_bold if total_h > 0 else font_small,
-            anchor="mm",
-        )
+        draw.text((right_col_center_x, y_center), sum_text, fill=COLOR_TEXT, font=font_bold if total_h > 0 else font_small, anchor="mm")
 
     summary_y = grid_bottom_y + 18
     draw.text((25, summary_y), "Черг:", fill=COLOR_TEXT, font=font_bold, anchor="lm")
@@ -334,13 +302,7 @@ def create_schedule_image(
         q_count_second = count_main_queues_off_in_slot(cell_states, c2)
         q_val = max(q_count_first, q_count_second) * 1.0
         x_hour_center = MARGIN_LEFT + (hour * 2 * CELL_WIDTH) + CELL_WIDTH
-        draw.text(
-            (x_hour_center, summary_y),
-            f"{q_val:.1f}",
-            fill=COLOR_TEXT if q_val > 0 else COLOR_TEXT_LIGHT,
-            font=font_bold if q_val > 0 else font_small,
-            anchor="mm",
-        )
+        draw.text((x_hour_center, summary_y), f"{q_val:.1f}", fill=COLOR_TEXT if q_val > 0 else COLOR_TEXT_LIGHT, font=font_bold if q_val > 0 else font_small, anchor="mm")
 
     if no_outages or len(effective_data) == 0:
         banner_w = 420
@@ -351,13 +313,7 @@ def create_schedule_image(
         by2 = by1 + banner_h
 
         draw.rectangle([bx1, by1, bx2, by2], fill=(255, 255, 255), outline=(46, 125, 50), width=3)
-        draw.text(
-            ((bx1 + bx2) / 2, (by1 + by2) / 2),
-            "БЕЗ ВІДКЛЮЧЕНЬ!",
-            fill=(27, 94, 32),
-            font=font_banner,
-            anchor="mm",
-        )
+        draw.text(((bx1 + bx2) / 2, (by1 + by2) / 2), "БЕЗ ВІДКЛЮЧЕНЬ!", fill=(27, 94, 32), font=font_banner, anchor="mm")
 
     site_x = time_to_x(update_dt, schedule_date)
     now_x = time_to_x(now, schedule_date)
@@ -619,13 +575,104 @@ def apply_queue_overrides(base_data, overrides):
     return data
 
 
+def generate_caption(current_data, prev_data, is_empty):
+    """Генерує HTML-підпис зі змінами для Telegram."""
+    now_str = get_now().strftime("%d.%m.%Y")
+    caption = f"📅 <b>{now_str} - Оновлено ГПВ</b>\n\n"
+
+    if is_empty:
+        return caption + "✅ <b>БЕЗ ВІДКЛЮЧЕНЬ!</b>"
+
+    if prev_data is None:
+        return caption + "⚡ <b>Оновлений графік відключень</b>"
+
+    added_slots = []
+    removed_slots = []
+
+    for row in range(NUM_QUEUES):
+        for col in range(NUM_INTERVALS):
+            now_off = bool(current_data.get((row, col), False))
+            was_off = bool(prev_data.get((row, col), False))
+            
+            if now_off and not was_off:
+                added_slots.append((row, col))
+            elif not now_off and was_off:
+                removed_slots.append((row, col))
+
+    if not added_slots and not removed_slots:
+        return caption + "🤷‍♂️ Змін немає."
+
+    def get_intervals(slots):
+        by_row = {}
+        for r, c in slots:
+            by_row.setdefault(r, []).append(c)
+        
+        result = []
+        for r, cols in by_row.items():
+            cols.sort()
+            start = cols[0]
+            prev = cols[0]
+            for c in cols[1:]:
+                if c == prev + 1:
+                    prev = c
+                else:
+                    result.append((r, start, prev))
+                    start = c
+                    prev = c
+            result.append((r, start, prev))
+        return result
+
+    if added_slots:
+        total_h = len(added_slots) * 0.5
+        caption += f"🟢 <b>Додано відключення (+{total_h:.1f}):</b>\n"
+        
+        groups = {}
+        for r, st, en in get_intervals(added_slots):
+            sh, sm = st // 2, 30 if st % 2 else 0
+            eh, em = (en + 1) // 2, 30 if (en + 1) % 2 else 0
+            if eh == 24: em = 0
+            time_str = f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}"
+            dur = (en - st + 1) * 0.5
+            key = (time_str, dur)
+            groups.setdefault(key, []).append(queues[r])
+        
+        for (time_str, dur), q_list in groups.items():
+            q_str = ", ".join(q_list)
+            caption += f"◾️ {q_str}: +{dur:.1f}  {time_str}\n"
+        caption += "\n"
+
+    if removed_slots:
+        total_h = len(removed_slots) * 0.5
+        caption += f"🔴 <b>Прибрано відключення (-{total_h:.1f}):</b>\n"
+        
+        groups = {}
+        for r, st, en in get_intervals(removed_slots):
+            sh, sm = st // 2, 30 if st % 2 else 0
+            eh, em = (en + 1) // 2, 30 if (en + 1) % 2 else 0
+            if eh == 24: em = 0
+            time_str = f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}"
+            dur = (en - st + 1) * 0.5
+            key = (time_str, dur)
+            groups.setdefault(key, []).append(queues[r])
+        
+        for (time_str, dur), q_list in groups.items():
+            q_str = ", ".join(q_list)
+            caption += f"◾️ {q_str}: -{dur:.1f}  {time_str}\n"
+
+    return caption.strip()
+
+
 def send_to_telegram(image_path, caption="Оновлений графік відключень ⚡"):
     print(f"Відправляємо {image_path} в Telegram...")
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     try:
         with open(image_path, "rb") as photo:
             files = {"photo": photo}
-            data = {"chat_id": CHANNEL_ID, "caption": caption}
+            data = {
+                "chat_id": CHANNEL_ID, 
+                "caption": caption,
+                "parse_mode": "HTML"
+            }
             response = requests.post(url, files=files, data=data, timeout=30)
             if response.status_code == 200:
                 print("✅ Картинку успішно відправлено в канал!")
@@ -679,7 +726,7 @@ def run_single_check(save_source_gpv=False):
             site_update_dt=site_update_dt,
             no_outages=is_empty,
         )
-        caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
+        caption = generate_caption(current_data, last_data, is_empty)
         send_to_telegram(img_file, caption=caption)
         save_state(current_data, STATE_FILE)
     else:
@@ -695,7 +742,7 @@ if __name__ == "__main__":
         if args.no_outages:
             img_file = create_schedule_image({}, prev_data=None, no_outages=True)
             if args.send:
-                send_to_telegram(img_file, caption="БЕЗ ВІДКЛЮЧЕНЬ! ✅")
+                send_to_telegram(img_file, caption="✅ <b>БЕЗ ВІДКЛЮЧЕНЬ!</b>")
             sys.exit(0)
 
         base_debug = build_debug_schedule(DEBUG_QUEUES)
@@ -708,7 +755,7 @@ if __name__ == "__main__":
             no_outages=is_empty,
         )
         if args.send:
-            caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
+            caption = generate_caption(updated_debug, prev_for_debug, is_empty)
             send_to_telegram(img_file, caption=caption)
         sys.exit(0)
 
@@ -728,7 +775,7 @@ if __name__ == "__main__":
             no_outages=is_empty,
         )
         if args.send:
-            caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
+            caption = generate_caption(override_data, prev_for_live, is_empty)
             send_to_telegram(img_file, caption=caption)
         sys.exit(0)
 
@@ -761,7 +808,7 @@ if __name__ == "__main__":
                         site_update_dt=site_update_dt,
                         no_outages=is_empty,
                     )
-                    caption = "БЕЗ ВІДКЛЮЧЕНЬ! ✅" if is_empty else "Оновлений графік відключень ⚡"
+                    caption = generate_caption(current_data, last_data, is_empty)
                     send_to_telegram(img_file, caption=caption)
                     last_data = current_data
                     save_state(last_data, STATE_FILE)
@@ -772,5 +819,5 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Сталася помилка під час циклу: {e}")
 
-        print("Наступна перевірка через 1 хвилин...")
-        time.sleep(60)
+        print("Наступна перевірка через 5 хвилин...")
+        time.sleep(5 * 60)
