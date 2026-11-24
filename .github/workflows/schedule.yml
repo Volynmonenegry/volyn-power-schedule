@@ -1,11 +1,9 @@
-
 name: Volyn Power Schedule
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
   schedule:
     - cron: "*/5 * * * *"
 
@@ -29,8 +27,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -39,14 +35,10 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          playwright install chromium --with-deps
+        run: pip install -r requirements.txt
 
       - name: Run bot
-        run: |
-          python -m py_compile main.py
-          python -u main.py --once
+        run: python -u main.py --once
 
       - name: Upload generated schedules
         if: always()
@@ -58,13 +50,13 @@ jobs:
 
       - name: Commit updated state
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add state.json
-
-          if ! git diff --cached --quiet; then
-            git commit -m "Update schedule state [skip ci]"
-            git pull --rebase origin main
-            git push origin HEAD:main
+          if [ -f state.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            if ! git diff --cached --quiet; then
+              git commit -m "Update schedule state [skip ci]"
+              git pull --rebase origin main
+              git push origin HEAD:main
+            fi
           fi
