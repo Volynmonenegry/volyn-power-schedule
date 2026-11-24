@@ -61,5 +61,6 @@ jobs:
           path: "*.png"
           if-no-files-found: ignore
 
-      - name: Commit updated state
-        if: ${{ always() && !contains(env.ARGS, '--debug') && !contains(env.ARGS, '--live-override') }}      
+          
+       - name: Commit updated state
+      if: ${{ !contains(env.ARGS, '--debug') && !contains(env.ARGS, '--live-override') }} 
