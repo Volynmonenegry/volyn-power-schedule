@@ -22,7 +22,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 55 # Збільшено з 5 хв, бо для schedule у вас стоїть timeout 50m
 
     env:
       TZ: Europe/Kyiv
@@ -48,10 +48,9 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             timeout 50m python -u main.py || true
           else
-          echo "▶ python -u main.py $ARGS"
-          eval "python -u main.py $ARGS"
+            echo "▶ python -u main.py $ARGS"
+            eval "python -u main.py $ARGS"
           fi
-          
 
       - name: Upload generated images
         if: always()
@@ -61,6 +60,13 @@ jobs:
           path: "*.png"
           if-no-files-found: ignore
 
-          
-       - name: Commit updated state
-      if: ${{ !contains(env.ARGS, '--debug') && !contains(env.ARGS, '--live-override') }} 
+      - name: Commit updated state
+        if: ${{ !contains(env.ARGS, '--debug') && !contains(env.ARGS, '--live-override') }}
+        run: |
+          git config --local user.email "github-actions[bot]@://github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: update schedule state [skip ci]"
+            git push
+          fi
