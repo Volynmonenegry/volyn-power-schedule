@@ -2,6 +2,11 @@ name: Volyn Power Schedule
 
 on:
   workflow_dispatch:
+    inputs:
+      args:
+        description: 'Аргументи для main.py (напр.: --live-override --save-source-gpv)'
+        required: false
+        default: "--live-override --save-source-gpv --send"
   push:
     branches: [main]
   schedule:
@@ -23,6 +28,7 @@ jobs:
       TZ: Europe/Kyiv
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
       CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+      ARGS: ${{ github.event.inputs.args || '--once' }}
 
     steps:
       - name: Checkout
@@ -38,9 +44,11 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run bot
-        run: python -u main.py --once
+        run: |
+          echo "▶ python -u main.py $ARGS"
+          eval "python -u main.py $ARGS"
 
-      - name: Upload generated schedules
+      - name: Upload generated images
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -49,6 +57,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Commit updated state
+        if: ${{ !contains(env.ARGS, '--debug') && !contains(env.ARGS, '--live-override') }}
         run: |
           if [ -f state.json ]; then
             git config user.name "github-actions[bot]"
