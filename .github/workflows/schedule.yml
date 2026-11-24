@@ -28,7 +28,7 @@ jobs:
       TZ: Europe/Kyiv
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
       CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-      ARGS: ${{ github.event.inputs.args || '--once' }}
+      ARGS: ${{ github.event.inputs.args }}
 
     steps:
       - name: Checkout
