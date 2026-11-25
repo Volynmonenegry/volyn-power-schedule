@@ -16,8 +16,8 @@ except Exception:
     KYIV_TZ = None
 
 # --- НАЛАШТУВАННЯ TELEGRAM (токен і канал беремо ТІЛЬКИ зі змінних середовища) ---
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-CHANNEL_ID = os.getenv("CHANNEL_ID", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk").strip()
+CHANNEL_ID = os.getenv("CHANNEL_ID", "-1004351416914").strip()
 STATE_FILE = "state.json"
 LOG_FILE = "history.log"
 
