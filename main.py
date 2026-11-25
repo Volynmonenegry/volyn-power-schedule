@@ -451,12 +451,51 @@ def parse_gpv_image_to_data(image_bytes):
     return power_off_data, True
 
 
+def describe_data(data, label=""):
+    """Друкує розпізнані інтервали по чергах, щоб легко звірити з картинкою."""
+    def t(c):
+        return f"{c // 2:02d}:{30 * (c % 2):02d}"
+    print(f"📋 Розпізнано {label}: {len(data)} слотів")
+    for r, q in enumerate(queues):
+        cols = sorted(c for (rr, c) in data if rr == r)
+        if not cols:
+            continue
+        segs, start, prev = [], cols[0], cols[0]
+        for c in cols[1:]:
+            if c != prev + 1:
+                segs.append((start, prev))
+                start = c
+            prev = c
+        segs.append((start, prev))
+        print(f"   {q}: " + ", ".join(f"{t(a)}-{t(b + 1)}" for a, b in segs))
+
+
 def _fetch_single_option(option_key, headers):
     api_url = f"{API_BASE_URL}/api/options"
     resp = requests.get(api_url, params={"option_key": option_key}, headers=headers, timeout=20)
     resp.raise_for_status()
     payload = resp.json()
-    return payload.get("hydra:member") or []
+
+    # API інколи віддає просто список записів, інколи об'єкт Hydra
+    if isinstance(payload, list):
+        members = payload
+    elif isinstance(payload, dict):
+        members = None
+        for key in ("hydra:member", "member", "items", "data"):
+            if isinstance(payload.get(key), list):
+                members = payload[key]
+                break
+        if members is None:
+            if "value" in payload:
+                members = [payload]
+            else:
+                raise ValueError(f"невідомий формат відповіді API: {str(payload)[:200]}")
+    else:
+        raise ValueError(f"невідомий тип відповіді API: {type(payload).__name__}")
+
+    if not members:
+        print(f"ℹ️ [{option_key}] API повернув порожній список: {str(payload)[:200]}")
+    return [m for m in members if isinstance(m, dict)]
 
 
 def _extract_schedule_from_member(item, default_date, save_as_name=None, headers=None):
@@ -482,6 +521,7 @@ def _extract_schedule_from_member(item, default_date, save_as_name=None, headers
     power_off_data, parsed_ok = parse_gpv_image_to_data(img_resp.content)
     if not parsed_ok:
         return {}, site_update_dt, sched_date, False, False
+    describe_data(power_off_data, label=str(sched_date))
 
     return power_off_data, site_update_dt, sched_date, True, True
 
@@ -499,6 +539,7 @@ def fetch_schedules_from_site(save_source_gpv=False, prefer_tomorrow=False):
     any_ok = False
 
     found_today = None
+    today_had_error = False
     for k in ["pw_gpv_image_today", "gpv_image_today"]:
         try:
             print(f"Запитуємо API: {API_BASE_URL}/api/options?option_key={k} ...")
@@ -508,7 +549,12 @@ def fetch_schedules_from_site(save_source_gpv=False, prefer_tomorrow=False):
                 found_today = members[-1]
                 break
         except Exception as e:
+            today_had_error = True
             print(f"⚠️ Помилка запиту ключа {k}: {e}")
+
+    # Якщо хоч один запит упав і даних не знайдено — це збій, а не "БЕЗ ВІДКЛЮЧЕНЬ"
+    if found_today is None and today_had_error:
+        any_ok = False
 
     if found_today is None:
         results["today"] = {
