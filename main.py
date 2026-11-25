@@ -22,12 +22,6 @@ STATE_FILE = "state.json"
 
 # --- НАЛАШТУВАННЯ API ВОЛИНЬОБЛЕНЕРГО ---
 API_BASE_URL = "https://api-voe-poweron.inneti.net"
-GPV_OPTION_KEYS = [
-    "pw_gpv_image_today",
-    "pw_gpv_image_tomorrow",
-    "gpv_image_today",
-    "gpv_image_tomorrow",
-]
 
 # --- НАЛАШТУВАННЯ ТАБЛИЦІ ---
 CELL_WIDTH = 28
@@ -377,19 +371,21 @@ def _is_cell_fill(rgb):
 
 
 def _is_outage_pixel(rgb):
+    """
+    Розпізнає тёмно-сині клітинки відключень на картинках Волиньобленерго.
+    Світлі сіро-блакитні клітинки наявного світла мають високу яскравість (~185-215) і малу різницю B-R,
+    тоді як клітинки відключення помітно темніші та синіші.
+    """
     r, g, b = [int(v) for v in rgb[:3]]
     brightness = (r + g + b) / 3.0
-    if brightness < 155 and (b >= r - 10 or brightness < 115):
-        return True
-    if brightness < 205 and (b - r > 18 or r - g > 35):
-        return True
-    return False
+    return brightness < 135 and (b - r) >= 22
 
 
 def _find_grid_in_band(pixels, width, height, y_min, y_max):
-    x_scan_min = int(width * 0.36) if width >= 1200 else int(width * 0.33)
-    x_scan_max = int(width * 0.96)
-    step_x = max(2, (x_scan_max - x_scan_min) // 120)
+    # Починаємо після стовпців "Черга" та "Підчерга"
+    x_scan_min = int(width * 0.19) if width >= 1000 else int(width * 0.20)
+    x_scan_max = int(width * 0.98)
+    step_x = max(2, (x_scan_max - x_scan_min) // 140)
     sample_xs = list(range(x_scan_min, x_scan_max, step_x))
     if not sample_xs:
         return None
@@ -399,7 +395,7 @@ def _find_grid_in_band(pixels, width, height, y_min, y_max):
         hits = sum(1 for x in sample_xs if _is_cell_fill(pixels[x, y]))
         row_scores.append((y, hits / float(len(sample_xs))))
 
-    good_ys = [y for y, ratio in row_scores if ratio >= 0.35]
+    good_ys = [y for y, ratio in row_scores if ratio >= 0.45]
     if not good_ys:
         return None
 
@@ -414,7 +410,7 @@ def _find_grid_in_band(pixels, width, height, y_min, y_max):
     segments.append((s, p))
 
     top_y, bot_y = max(segments, key=lambda seg: seg[1] - seg[0])
-    if bot_y - top_y < 60:
+    if bot_y - top_y < 80:
         return None
 
     left_vals = []
@@ -422,8 +418,8 @@ def _find_grid_in_band(pixels, width, height, y_min, y_max):
     for frac in (0.15, 0.35, 0.50, 0.65, 0.85):
         sy = int(top_y + (bot_y - top_y) * frac)
         if 0 <= sy < height:
-            xs = [x for x in range(x_scan_min, int(width * 0.99)) if _is_cell_fill(pixels[x, sy])]
-            if len(xs) >= 80:
+            xs = [x for x in range(x_scan_min, int(width * 0.995)) if _is_cell_fill(pixels[x, sy])]
+            if len(xs) >= 120:
                 left_vals.append(xs[0])
                 right_vals.append(xs[-1])
 
@@ -434,14 +430,14 @@ def _find_grid_in_band(pixels, width, height, y_min, y_max):
     right_vals.sort()
     x1 = left_vals[len(left_vals) // 2]
     x2 = right_vals[len(right_vals) // 2]
-    if x2 - x1 < 180:
+    if x2 - x1 < 240:
         return None
 
     return x1, top_y, x2, bot_y
 
 
 def _sample_cell_is_outage(pixels, width, height, cx, cy, slot_w, row_h):
-    offsets = (-0.24, 0.0, 0.24)
+    offsets = (-0.22, 0.0, 0.22)
     outage_votes = 0
     total_votes = 0
 
@@ -542,77 +538,100 @@ def fetch_schedules_from_site(save_source_gpv=False, prefer_tomorrow=False):
     results = {}
     any_ok = False
 
-    key_targets = [
-        ("today", ["pw_gpv_image_today", "gpv_image_today"], today_date, "source_gpv_today.png"),
-        ("tomorrow", ["pw_gpv_image_tomorrow", "gpv_image_tomorrow"], tomorrow_date, "source_gpv_tomorrow.png"),
-    ]
+    # 1. Сьогодні
+    found_today = None
+    for k in ["pw_gpv_image_today", "gpv_image_today"]:
+        try:
+            print(f"Запитуємо API: {API_BASE_URL}/api/options?option_key={k} ...")
+            members = _fetch_single_option(k, headers)
+            any_ok = True
+            if members:
+                found_today = members[-1]
+                break
+        except Exception as e:
+            print(f"⚠️ Помилка запиту ключа {k}: {e}")
 
-    for slot_name, keys, target_dt, save_name in key_targets:
-        found_member = None
-        used_key = keys[0]
-        for k in keys:
-            try:
-                print(f"Запитуємо API: {API_BASE_URL}/api/options?option_key={k} ...")
-                members = _fetch_single_option(k, headers)
-                any_ok = True
-                if members:
-                    found_member = members[-1]
-                    used_key = k
-                    break
-            except Exception as e:
-                print(f"⚠️ Помилка запиту ключа {k}: {e}")
-
-        if found_member is None:
-            if slot_name == "today":
-                results["today"] = {
-                    "data": {},
-                    "update_dt": None,
-                    "date": today_date,
-                    "found": False,
-                    "ok": any_ok,
-                }
-            else:
-                results["tomorrow"] = None
-            continue
-
+    if found_today is None:
+        results["today"] = {
+            "data": {},
+            "update_dt": None,
+            "date": today_date,
+            "found": False,
+            "ok": any_ok,
+        }
+    else:
         try:
             data, upd_dt, s_date, found_sched, parsed_ok = _extract_schedule_from_member(
-                found_member,
-                default_date=target_dt,
-                save_as_name=(save_name if save_source_gpv else None),
+                found_today,
+                default_date=today_date,
+                save_as_name=("source_gpv_today.png" if save_source_gpv else None),
                 headers=headers,
             )
-            if save_source_gpv and slot_name == "today" and os.path.exists(save_name):
-                with open(save_name, "rb") as src, open("source_gpv.png", "wb") as dst:
+            if save_source_gpv and os.path.exists("source_gpv_today.png"):
+                with open("source_gpv_today.png", "rb") as src, open("source_gpv.png", "wb") as dst:
                     dst.write(src.read())
 
-            if not parsed_ok:
-                print(f"⚠️ Помилка розпізнавання сітки для {used_key}.")
-                results[slot_name] = {
-                    "data": {},
-                    "update_dt": upd_dt,
-                    "date": s_date,
-                    "found": False,
-                    "ok": False,
-                }
-            else:
-                print(f"✅ [{slot_name}] Розпізнано слотів відключень: {len(data)}")
-                results[slot_name] = {
-                    "data": data,
-                    "update_dt": upd_dt,
-                    "date": s_date,
-                    "found": found_sched,
-                    "ok": True,
-                }
+            results["today"] = {
+                "data": data if parsed_ok else {},
+                "update_dt": upd_dt,
+                "date": s_date,
+                "found": found_sched if parsed_ok else False,
+                "ok": parsed_ok,
+            }
+            if parsed_ok:
+                print(f"✅ [today] Розпізнано слотів відключень: {len(data)}")
         except Exception as e:
-            print(f"❌ Помилка завантаження/парсингу {used_key}: {e}")
-            results[slot_name] = {
+            print(f"❌ Помилка завантаження/парсингу today: {e}")
+            results["today"] = {
                 "data": {},
                 "update_dt": None,
-                "date": target_dt,
+                "date": today_date,
                 "found": False,
                 "ok": False,
             }
+
+    # 2. Завтра — підключаємо лише якщо в API реально задане media_path і воно не зі старої дати
+    found_tomorrow = None
+    for k in ["pw_gpv_image_tomorrow", "gpv_image_tomorrow"]:
+        try:
+            print(f"Запитуємо API: {API_BASE_URL}/api/options?option_key={k} ...")
+            members = _fetch_single_option(k, headers)
+            if members:
+                candidate = members[-1]
+                cand_val = (candidate.get("value") or "").strip()
+                cand_dt = parse_iso_to_kyiv_naive(candidate.get("date"))
+                # Ігноруємо пусті або явно прострочені записи з минулих днів
+                is_stale = cand_dt is not None and cand_dt.date() < today_date
+                if cand_val and not is_stale:
+                    found_tomorrow = candidate
+                    break
+        except Exception as e:
+            print(f"⚠️ Помилка запиту ключа {k}: {e}")
+
+    if found_tomorrow is None:
+        results["tomorrow"] = None
+    else:
+        try:
+            data, upd_dt, s_date, found_sched, parsed_ok = _extract_schedule_from_member(
+                found_tomorrow,
+                default_date=tomorrow_date,
+                save_as_name=("source_gpv_tomorrow.png" if save_source_gpv else None),
+                headers=headers,
+            )
+            if parsed_ok and found_sched:
+                print(f"✅ [tomorrow] Розпізнано слотів відключень: {len(data)}")
+                results["tomorrow"] = {
+                    "data": data,
+                    "update_dt": upd_dt,
+                    "date": s_date,
+                    "found": True,
+                    "ok": True,
+                }
+            else:
+                results["tomorrow"] = None
+        except Exception as e:
+            print(f"⚠️ Помилка завантаження/парсингу tomorrow: {e}")
+            results["tomorrow"] = None
 
     return results
 
