@@ -19,6 +19,7 @@ except Exception:
 BOT_TOKEN = os.getenv("BOT_TOKEN", "9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk").strip()
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1004351416914").strip()
 STATE_FILE = "state.json"
+LOG_FILE = "history.log"
 
 # --- НАЛАШТУВАННЯ API ВОЛИНЬОБЛЕНЕРГО ---
 API_BASE_URL = "https://api-voe-poweron.inneti.net"
@@ -106,7 +107,10 @@ def load_state(path=STATE_FILE, schedule_date=None):
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
+            raw = f.read().strip()
+        if not raw or raw == "{}":
+            return None
+        payload = json.loads(raw)
         target_date = (schedule_date or get_now().date()).isoformat()
         if payload.get("date") != target_date:
             return None
@@ -124,6 +128,15 @@ def save_state(data_dict, path=STATE_FILE, schedule_date=None):
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def append_change_log(caption_html, log_path=LOG_FILE):
+    plain_text = re.sub(r"<[^>]+>", "", caption_html).strip()
+    timestamp = get_now().strftime("%Y-%m-%d %H:%M:%S")
+    entry = f"[{timestamp}]\n{plain_text}\n{'-' * 40}\n"
+    print(f"📝 Запис у {log_path}:\n{entry.strip()}")
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(entry)
 
 
 def draw_hatched_rect(draw, coords, base_color, hatch_color, step=8):
@@ -389,41 +402,19 @@ def _sample_cell_is_outage(pixels, width, height, cx, cy, slot_w, row_h):
     return total_votes > 0 and outage_votes > (total_votes / 2.0)
 
 
-def _find_exact_table_y(pixels, x1, x2, y_start, y_end):
-    """Знаходить реальні верхню та нижню межі 12 рядків таблиці всередині діапазону Y."""
-    xs = [x1 + int((x2 - x1) * f) for f in (0.05, 0.2, 0.4, 0.6, 0.8, 0.95)]
-    active_ys = []
-    for y in range(y_start, y_end):
-        colored = 0
-        for x in xs:
-            r, g, b = [int(v) for v in pixels[x, y][:3]]
-            if not (r > 235 and g > 235 and b > 235):
-                colored += 1
-        if colored >= len(xs) * 0.6:
-            active_ys.append(y)
-    if not active_ys:
-        return y_start, y_end
-    return active_ys[0], active_ys[-1]
-
-
 def parse_gpv_image_to_data(image_bytes):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     width, height = img.size
     pixels = img.load()
 
     if width == 1750 and height == 2250:
-        x1, x2 = 335, 1717
-        ty1, ty2 = _find_exact_table_y(pixels, x1, x2, 440, 960)
-        by1, by2 = _find_exact_table_y(pixels, x1, x2, 1340, 1860)
-        top_bounds = (x1, ty1, x2, ty2)
-        bot_bounds = (x1, by1, x2, by2)
+        top_bounds = (335, 454, 1717, 1002)
+        bot_bounds = (335, 1364, 1717, 1912)
     else:
         x1 = int(width * 0.192)
         x2 = int(width * 0.981)
-        ty1, ty2 = _find_exact_table_y(pixels, x1, x2, int(height * 0.19), int(height * 0.43))
-        by1, by2 = _find_exact_table_y(pixels, x1, x2, int(height * 0.59), int(height * 0.83))
-        top_bounds = (x1, ty1, x2, ty2)
-        bot_bounds = (x1, by1, x2, by2)
+        top_bounds = (x1, int(height * 0.202), x2, int(height * 0.445))
+        bot_bounds = (x1, int(height * 0.606), x2, int(height * 0.850))
 
     power_off_data = {}
     blocks = [
@@ -813,6 +804,7 @@ def _process_slot_update(slot_name, entry, state_path, save_state_file=True):
             no_outages=is_empty,
         )
         caption = generate_caption(current_data, last_data, is_empty, schedule_date=sched_date)
+        append_change_log(caption)
         send_to_telegram(img_file, caption=caption)
         if save_state_file:
             save_state(current_data, state_path, schedule_date=sched_date)
@@ -840,7 +832,9 @@ if __name__ == "__main__":
         if args.no_outages:
             img_file = create_schedule_image({}, prev_data=None, no_outages=True)
             if args.send:
-                send_to_telegram(img_file, caption=generate_caption({}, None, True))
+                caption = generate_caption({}, None, True)
+                append_change_log(caption)
+                send_to_telegram(img_file, caption=caption)
             sys.exit(0)
 
         base_debug = build_debug_schedule(DEBUG_QUEUES)
@@ -854,6 +848,7 @@ if __name__ == "__main__":
         )
         if args.send:
             caption = generate_caption(updated_debug, prev_for_debug, is_empty)
+            append_change_log(caption)
             send_to_telegram(img_file, caption=caption)
         sys.exit(0)
 
@@ -887,6 +882,7 @@ if __name__ == "__main__":
         )
         if args.send:
             caption = generate_caption(override_data, prev_for_live, is_empty, schedule_date=sched_date)
+            append_change_log(caption)
             send_to_telegram(img_file, caption=caption)
         sys.exit(0)
 
