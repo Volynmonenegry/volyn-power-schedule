@@ -15,9 +15,9 @@ try:
 except Exception:
     KYIV_TZ = None
 
-# --- НАЛАШТУВАННЯ TELEGRAM ---
-BOT_TOKEN = os.getenv("BOT_TOKEN", "9095679047:AAHM6iBir2yhMWtro88qQ7TlbR0xWEkVNRk").strip()
-CHANNEL_ID = os.getenv("CHANNEL_ID", "-1004351416914").strip()
+# --- НАЛАШТУВАННЯ TELEGRAM (токен і канал беремо ТІЛЬКИ зі змінних середовища) ---
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+CHANNEL_ID = os.getenv("CHANNEL_ID", "").strip()
 STATE_FILE = "state.json"
 LOG_FILE = "history.log"
 
@@ -72,15 +72,26 @@ def get_now():
 
 
 def parse_iso_to_kyiv_naive(iso_str):
+    """
+    Перетворює дату з API у київський час без tzinfo.
+    Якщо після перерахунку з UTC час виходить у майбутньому,
+    значить API вже віддав місцевий час із позначкою UTC — беремо його як є.
+    """
     if not iso_str:
         return None
     try:
         dt = datetime.datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        if dt.tzinfo is not None:
-            if KYIV_TZ is not None:
-                dt = dt.astimezone(KYIV_TZ)
-            return dt.replace(tzinfo=None)
-        return dt
+        if dt.tzinfo is None:
+            return dt
+
+        raw = dt.replace(tzinfo=None)
+        if KYIV_TZ is None:
+            return raw
+
+        converted = dt.astimezone(KYIV_TZ).replace(tzinfo=None)
+        if converted > get_now() + datetime.timedelta(minutes=2):
+            return raw
+        return converted
     except Exception:
         return None
 
@@ -407,14 +418,16 @@ def parse_gpv_image_to_data(image_bytes):
     width, height = img.size
     pixels = img.load()
 
+    # Межі сітки виміряні на реальній картинці ГПВ 1750x2250:
+    # 24 колонки по ~65 px (x: 176..1736), 12 рядків по 60 px.
     if width == 1750 and height == 2250:
-        top_bounds = (335, 454, 1717, 1002)
-        bot_bounds = (335, 1364, 1717, 1912)
+        top_bounds = (176, 420, 1736, 1140)
+        bot_bounds = (176, 1311, 1736, 2031)
     else:
-        x1 = int(width * 0.192)
-        x2 = int(width * 0.981)
-        top_bounds = (x1, int(height * 0.202), x2, int(height * 0.445))
-        bot_bounds = (x1, int(height * 0.606), x2, int(height * 0.850))
+        x1 = int(width * 0.1006)
+        x2 = int(width * 0.992)
+        top_bounds = (x1, int(height * 0.1867), x2, int(height * 0.5067))
+        bot_bounds = (x1, int(height * 0.5827), x2, int(height * 0.9027))
 
     power_off_data = {}
     blocks = [
@@ -448,6 +461,7 @@ def _fetch_single_option(option_key, headers):
 
 def _extract_schedule_from_member(item, default_date, save_as_name=None, headers=None):
     media_path = (item.get("value") or "").strip()
+    print(f"RAW date з API: {item.get('date')}")
     site_update_dt = parse_iso_to_kyiv_naive(item.get("date"))
     sched_date = default_date
 
@@ -687,44 +701,31 @@ def generate_caption(current_data, prev_data, is_empty, schedule_date=None):
             result.append((r, start, prev))
         return result
 
-    if added_slots:
-        total_h = len(added_slots) * 0.5
-        caption += f"🟢 <b>Додано відключення (+{total_h:.1f}):</b>\n"
-
+    def build_section(slots, sign):
+        total_h = len(slots) * 0.5
         groups = {}
-        for r, st, en in get_intervals(added_slots):
+        for r, st, en in get_intervals(slots):
             sh, sm = st // 2, 30 if st % 2 else 0
             eh, em = (en + 1) // 2, 30 if (en + 1) % 2 else 0
             if eh == 24:
                 em = 0
             time_str = f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}"
             dur = (en - st + 1) * 0.5
-            key = (time_str, dur)
-            groups.setdefault(key, []).append(queues[r])
+            groups.setdefault((time_str, dur), []).append(queues[r])
+        return total_h, groups
 
+    if added_slots:
+        total_h, groups = build_section(added_slots, "+")
+        caption += f"🟢 <b>Додано відключення (+{total_h:.1f}):</b>\n"
         for (time_str, dur), q_list in groups.items():
-            q_str = ", ".join(q_list)
-            caption += f"◾️ {q_str}: +{dur:.1f}  {time_str}\n"
+            caption += f"◾️ {', '.join(q_list)}: +{dur:.1f}  {time_str}\n"
         caption += "\n"
 
     if removed_slots:
-        total_h = len(removed_slots) * 0.5
+        total_h, groups = build_section(removed_slots, "-")
         caption += f"🔴 <b>Прибрано відключення (-{total_h:.1f}):</b>\n"
-
-        groups = {}
-        for r, st, en in get_intervals(removed_slots):
-            sh, sm = st // 2, 30 if st % 2 else 0
-            eh, em = (en + 1) // 2, 30 if (en + 1) % 2 else 0
-            if eh == 24:
-                em = 0
-            time_str = f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}"
-            dur = (en - st + 1) * 0.5
-            key = (time_str, dur)
-            groups.setdefault(key, []).append(queues[r])
-
         for (time_str, dur), q_list in groups.items():
-            q_str = ", ".join(q_list)
-            caption += f"◾️ {q_str}: -{dur:.1f}  {time_str}\n"
+            caption += f"◾️ {', '.join(q_list)}: -{dur:.1f}  {time_str}\n"
 
     return caption.strip()
 
