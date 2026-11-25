@@ -330,30 +330,33 @@ def create_schedule_image(
     if now.date() == schedule_date:
         draw.line([(now_x, MARGIN_TOP - 8), (now_x, grid_bottom_y + 6)], fill=COLOR_NOW_LINE, width=3)
 
-    leg_y1 = summary_y + 32
-    leg_y2 = leg_y1 + 26
+    # Легенда у 3 широкі колонки без накладання текстів
+    leg_y1 = summary_y + 34
+    leg_y2 = leg_y1 + 28
 
-    draw.rectangle([MARGIN_LEFT, leg_y1, MARGIN_LEFT + 30, leg_y1 + 20], fill=COLOR_POWER_OFF)
-    draw.text((MARGIN_LEFT + 40, leg_y1 + 2), "Відсутнє електропостачання", fill=COLOR_TEXT, font=font_small)
+    col1_x = 25
+    col2_x = 500
+    col3_x = IMG_WIDTH - 340
 
-    draw_hatched_rect(draw, (MARGIN_LEFT, leg_y2, MARGIN_LEFT + 30, leg_y2 + 20), COLOR_ADDED_OFF, COLOR_HATCH_DARK)
-    draw.text((MARGIN_LEFT + 40, leg_y2 + 2), "Відсутнє електропостачання (додано відключення)", fill=COLOR_TEXT, font=font_small)
+    draw.rectangle([col1_x, leg_y1, col1_x + 30, leg_y1 + 20], fill=COLOR_POWER_OFF)
+    draw.text((col1_x + 40, leg_y1 + 10), "Відсутнє електропостачання", fill=COLOR_TEXT, font=font_small, anchor="lm")
 
-    col2_x = MARGIN_LEFT + 360
+    draw_hatched_rect(draw, (col1_x, leg_y2, col1_x + 30, leg_y2 + 20), COLOR_ADDED_OFF, COLOR_HATCH_DARK)
+    draw.text((col1_x + 40, leg_y2 + 10), "Відсутнє світло (додано)", fill=COLOR_TEXT, font=font_small, anchor="lm")
+
     draw.rectangle([col2_x, leg_y1, col2_x + 30, leg_y1 + 20], fill=COLOR_POWER_ON, outline=COLOR_GRID)
-    draw.text((col2_x + 40, leg_y1 + 2), "Наявне електропостачання", fill=COLOR_TEXT, font=font_small)
+    draw.text((col2_x + 40, leg_y1 + 10), "Наявне електропостачання", fill=COLOR_TEXT, font=font_small, anchor="lm")
 
     draw_hatched_rect(draw, (col2_x, leg_y2, col2_x + 30, leg_y2 + 20), COLOR_REMOVED_OFF, COLOR_HATCH_LIGHT)
-    draw.text((col2_x + 40, leg_y2 + 2), "Наявне електропостачання (прибрано відключення)", fill=COLOR_TEXT, font=font_small)
+    draw.text((col2_x + 40, leg_y2 + 10), "Наявне світло (прибрано)", fill=COLOR_TEXT, font=font_small, anchor="lm")
 
-    col3_x = IMG_WIDTH - 340
-    draw.line([(col3_x, leg_y1 - 2), (col3_x, leg_y1 + 20)], fill=COLOR_SITE_UPDATE_LINE, width=3)
-    draw.text((col3_x + 12, leg_y1 + 9), "Останнє оновлення на сайті", fill=COLOR_TEXT, font=font_small, anchor="lm")
-    draw.text((IMG_WIDTH - 25, leg_y1 + 9), update_dt.strftime("%d.%m %H:%M"), fill=COLOR_TEXT_LIGHT, font=font_small, anchor="rm")
+    draw.line([(col3_x, leg_y1), (col3_x, leg_y1 + 20)], fill=COLOR_SITE_UPDATE_LINE, width=3)
+    draw.text((col3_x + 12, leg_y1 + 10), "Оновлення на сайті", fill=COLOR_TEXT, font=font_small, anchor="lm")
+    draw.text((IMG_WIDTH - 25, leg_y1 + 10), update_dt.strftime("%d.%m %H:%M"), fill=COLOR_TEXT_LIGHT, font=font_small, anchor="rm")
 
-    draw.line([(col3_x, leg_y2 - 2), (col3_x, leg_y2 + 20)], fill=COLOR_NOW_LINE, width=3)
-    draw.text((col3_x + 12, leg_y2 + 9), "Поточний момент часу", fill=COLOR_TEXT, font=font_small, anchor="lm")
-    draw.text((IMG_WIDTH - 25, leg_y2 + 9), now.strftime("%d.%m %H:%M"), fill=COLOR_TEXT_LIGHT, font=font_small, anchor="rm")
+    draw.line([(col3_x, leg_y2), (col3_x, leg_y2 + 20)], fill=COLOR_NOW_LINE, width=3)
+    draw.text((col3_x + 12, leg_y2 + 10), "Поточний час", fill=COLOR_TEXT, font=font_small, anchor="lm")
+    draw.text((IMG_WIDTH - 25, leg_y2 + 10), now.strftime("%d.%m %H:%M"), fill=COLOR_TEXT_LIGHT, font=font_small, anchor="rm")
 
     if not output_path:
         output_path = f"schedule_{schedule_date.isoformat()}_{update_dt.strftime('%H-%M')}.png"
@@ -363,77 +366,14 @@ def create_schedule_image(
     return output_path
 
 
-def _is_cell_fill(rgb):
-    r, g, b = [int(v) for v in rgb[:3]]
-    if r >= 242 and g >= 242 and b >= 242:
-        return False
-    return max(r, g, b) - min(r, g, b) >= 3 or (r + g + b) < 710
-
-
 def _is_outage_pixel(rgb):
     """
-    Розпізнає тёмно-сині клітинки відключень на картинках Волиньобленерго.
-    Світлі сіро-блакитні клітинки наявного світла мають високу яскравість (~185-215) і малу різницю B-R,
-    тоді як клітинки відключення помітно темніші та синіші.
+    Темно-сині клітинки відключень на бланку Волиньобленерго:
+    мають помітно більший синій канал за червоний та невисоку яскравість.
     """
     r, g, b = [int(v) for v in rgb[:3]]
     brightness = (r + g + b) / 3.0
-    return brightness < 135 and (b - r) >= 22
-
-
-def _find_grid_in_band(pixels, width, height, y_min, y_max):
-    # Починаємо після стовпців "Черга" та "Підчерга"
-    x_scan_min = int(width * 0.19) if width >= 1000 else int(width * 0.20)
-    x_scan_max = int(width * 0.98)
-    step_x = max(2, (x_scan_max - x_scan_min) // 140)
-    sample_xs = list(range(x_scan_min, x_scan_max, step_x))
-    if not sample_xs:
-        return None
-
-    row_scores = []
-    for y in range(max(0, y_min), min(height, y_max)):
-        hits = sum(1 for x in sample_xs if _is_cell_fill(pixels[x, y]))
-        row_scores.append((y, hits / float(len(sample_xs))))
-
-    good_ys = [y for y, ratio in row_scores if ratio >= 0.45]
-    if not good_ys:
-        return None
-
-    segments = []
-    s = p = good_ys[0]
-    for y in good_ys[1:]:
-        if y - p <= 4:
-            p = y
-        else:
-            segments.append((s, p))
-            s = p = y
-    segments.append((s, p))
-
-    top_y, bot_y = max(segments, key=lambda seg: seg[1] - seg[0])
-    if bot_y - top_y < 80:
-        return None
-
-    left_vals = []
-    right_vals = []
-    for frac in (0.15, 0.35, 0.50, 0.65, 0.85):
-        sy = int(top_y + (bot_y - top_y) * frac)
-        if 0 <= sy < height:
-            xs = [x for x in range(x_scan_min, int(width * 0.995)) if _is_cell_fill(pixels[x, sy])]
-            if len(xs) >= 120:
-                left_vals.append(xs[0])
-                right_vals.append(xs[-1])
-
-    if not left_vals or not right_vals:
-        return None
-
-    left_vals.sort()
-    right_vals.sort()
-    x1 = left_vals[len(left_vals) // 2]
-    x2 = right_vals[len(right_vals) // 2]
-    if x2 - x1 < 240:
-        return None
-
-    return x1, top_y, x2, bot_y
+    return brightness < 125 and (b - r) >= 25
 
 
 def _sample_cell_is_outage(pixels, width, height, cx, cy, slot_w, row_h):
@@ -458,17 +398,16 @@ def parse_gpv_image_to_data(image_bytes):
     width, height = img.size
     pixels = img.load()
 
+    # Для стандартного бланка 1750x2250 сітка 24 стовпці x 12 рядків (6 черг x 2 підчерги)
+    # має точні координати після стовпців "Черга" та "Підчерга":
     if width == 1750 and height == 2250:
-        top_bounds = _find_grid_in_band(pixels, width, height, 400, 1020)
-        bot_bounds = _find_grid_in_band(pixels, width, height, 1300, 1950)
+        top_bounds = (335, 450, 1717, 1020)
+        bot_bounds = (335, 1350, 1717, 1920)
     else:
-        mid_y = height // 2
-        top_bounds = _find_grid_in_band(pixels, width, height, int(height * 0.14), mid_y)
-        bot_bounds = _find_grid_in_band(pixels, width, height, mid_y, int(height * 0.96))
-
-    if not top_bounds or not bot_bounds:
-        print(f"⚠️ Не вдалося визначити межі сітки (розмір: {width}x{height}, top={top_bounds}, bot={bot_bounds}).")
-        return {}, False
+        x1 = int(width * 0.192)
+        x2 = int(width * 0.981)
+        top_bounds = (x1, int(height * 0.20), x2, int(height * 0.453))
+        bot_bounds = (x1, int(height * 0.60), x2, int(height * 0.853))
 
     power_off_data = {}
     blocks = [
@@ -538,7 +477,6 @@ def fetch_schedules_from_site(save_source_gpv=False, prefer_tomorrow=False):
     results = {}
     any_ok = False
 
-    # 1. Сьогодні
     found_today = None
     for k in ["pw_gpv_image_today", "gpv_image_today"]:
         try:
@@ -590,7 +528,6 @@ def fetch_schedules_from_site(save_source_gpv=False, prefer_tomorrow=False):
                 "ok": False,
             }
 
-    # 2. Завтра — підключаємо лише якщо в API реально задане media_path і воно не зі старої дати
     found_tomorrow = None
     for k in ["pw_gpv_image_tomorrow", "gpv_image_tomorrow"]:
         try:
@@ -600,7 +537,6 @@ def fetch_schedules_from_site(save_source_gpv=False, prefer_tomorrow=False):
                 candidate = members[-1]
                 cand_val = (candidate.get("value") or "").strip()
                 cand_dt = parse_iso_to_kyiv_naive(candidate.get("date"))
-                # Ігноруємо пусті або явно прострочені записи з минулих днів
                 is_stale = cand_dt is not None and cand_dt.date() < today_date
                 if cand_val and not is_stale:
                     found_tomorrow = candidate
