@@ -367,10 +367,6 @@ def create_schedule_image(
 
 
 def _is_outage_pixel(rgb):
-    """
-    Темно-сині клітинки відключень на бланку Волиньобленерго:
-    мають помітно більший синій канал за червоний та невисоку яскравість.
-    """
     r, g, b = [int(v) for v in rgb[:3]]
     brightness = (r + g + b) / 3.0
     return brightness < 125 and (b - r) >= 25
@@ -393,21 +389,41 @@ def _sample_cell_is_outage(pixels, width, height, cx, cy, slot_w, row_h):
     return total_votes > 0 and outage_votes > (total_votes / 2.0)
 
 
+def _find_exact_table_y(pixels, x1, x2, y_start, y_end):
+    """Знаходить реальні верхню та нижню межі 12 рядків таблиці всередині діапазону Y."""
+    xs = [x1 + int((x2 - x1) * f) for f in (0.05, 0.2, 0.4, 0.6, 0.8, 0.95)]
+    active_ys = []
+    for y in range(y_start, y_end):
+        colored = 0
+        for x in xs:
+            r, g, b = [int(v) for v in pixels[x, y][:3]]
+            if not (r > 235 and g > 235 and b > 235):
+                colored += 1
+        if colored >= len(xs) * 0.6:
+            active_ys.append(y)
+    if not active_ys:
+        return y_start, y_end
+    return active_ys[0], active_ys[-1]
+
+
 def parse_gpv_image_to_data(image_bytes):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     width, height = img.size
     pixels = img.load()
 
-    # Для стандартного бланка 1750x2250 сітка 24 стовпці x 12 рядків (6 черг x 2 підчерги)
-    # має точні координати після стовпців "Черга" та "Підчерга":
     if width == 1750 and height == 2250:
-        top_bounds = (335, 450, 1717, 1020)
-        bot_bounds = (335, 1350, 1717, 1920)
+        x1, x2 = 335, 1717
+        ty1, ty2 = _find_exact_table_y(pixels, x1, x2, 440, 960)
+        by1, by2 = _find_exact_table_y(pixels, x1, x2, 1340, 1860)
+        top_bounds = (x1, ty1, x2, ty2)
+        bot_bounds = (x1, by1, x2, by2)
     else:
         x1 = int(width * 0.192)
         x2 = int(width * 0.981)
-        top_bounds = (x1, int(height * 0.20), x2, int(height * 0.453))
-        bot_bounds = (x1, int(height * 0.60), x2, int(height * 0.853))
+        ty1, ty2 = _find_exact_table_y(pixels, x1, x2, int(height * 0.19), int(height * 0.43))
+        by1, by2 = _find_exact_table_y(pixels, x1, x2, int(height * 0.59), int(height * 0.83))
+        top_bounds = (x1, ty1, x2, ty2)
+        bot_bounds = (x1, by1, x2, by2)
 
     power_off_data = {}
     blocks = [
